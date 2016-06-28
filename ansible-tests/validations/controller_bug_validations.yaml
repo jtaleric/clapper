@@ -1,0 +1,69 @@
+---
+- hosts: controller
+  vars:
+    metadata:
+      name: Check controllers for common deployment issues
+      description: todo
+      groups:
+        - post-deployment
+    tuned_profile: throughput-performance
+    rabbitmq_fd: 1600
+    haproxy_max_connections: 4096
+    mariadb_max_connections: 4096
+    mysqld_soft_fd: 16384
+    nova_vif_timeout: 300
+    netdev_max_backlog: 100000
+  tasks:
+    - name : Get rabbitmq status
+      shell: rabbitmqctl cluster_status | grep -q "{partitions,\[\]},"
+      register: rabbit_partitioned
+      become: true
+    - name : Check rabbitmq for partitions
+      fail: msg="RabbitMQ is partitioned, please fix this before doing anything with the Cloud"
+      failed_when: rabbit_partitioned.rc == 1
+    - name: Get max_connections on the database
+      shell: mysql -e "show variables like 'max_connections';" | grep max_connections | awk '{print $2}'
+      register: bz1266253
+      become: true
+    - name: Check max_connections on the database
+      fail: msg="Please tune the MySQL max_connections to {{mariadb_max_connections}}"
+      failed_when: bz1266253.stdout|int < mariadb_max_connections
+    - name: Get suggested buffer_pool_size
+      shell: mysql -Bse "SELECT CEILING(Total_InnoDB_Bytes*1.6/POWER(1024,2)) RIBPS FROM (SELECT SUM(data_length+index_length) Total_InnoDB_Bytes FROM information_schema.tables WHERE engine='InnoDB') A;"
+      register: suggested_buffer_pool_size
+      become: true
+    - name : Get current buffer_pool_size
+      shell: echo $(mysql -Bse " select @@innodb_buffer_pool_size")/1024/1024 | bc
+      register: buffer_pool_size
+      become: true
+    - name: Check current buffer_pool_size
+      fail: msg="Buffer Pool size not set to what is recommended which is {{suggested_buffer_pool_size.stdout}}"
+      failed_when: buffer_pool_size.stdout|int < suggested_buffer_pool_size.stdout|int
+    - name : Get file descriptors for the mysql process
+      shell: cat /proc/$(pgrep mysqld_safe)/limits | grep "open files" | awk '{print $4}'
+      register: mysqld_safe_soft_fd
+      become: true
+    - name: Check file descriptors for the mysql process
+      fail: msg="Please tune the number of MySQL file descriptors to {{mysqld_soft_fd}}"
+      failed_when: mysqld_safe_soft_fd.stdout|int < mysqld_soft_fd
+    - name : Get rabbitmq file descriptors
+      shell: rabbitmqctl status | grep file_descriptors | awk -F',' '{print $3}' | sed 's/.$//'
+      register: bz1282491
+      become: true
+    - name: Check rabbitmq file descriptors
+      fail: msg="Please tune the number of RabbitMQ file descrptors to {{rabbitmq_fd}}"
+      failed_when: bz1282491.stdout|int < rabbitmq_fd
+    - name : Get netns tuning
+      shell : sysctl net.core.netdev_max_backlog | awk '{print $3}'
+      register: bz1095811
+      become: true
+    - name: Check netns tuning
+      fail: msg="Tune netdev max backlog to, {{netdev_max_backlog}}"
+      failed_when: bz1095811.stdout|int < netdev_max_backlog
+    - name : Check udev performance issue
+      shell : grep -q 'SUBSYSTEM=="net", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}+="dhcp-interface@$name.service"' /etc/udev/rules.d/99-dhcp-all-interfaces.rules
+      register : bz1293712
+      become: true
+    - name:  Check udev performance issue
+      fail: msg="Verify that bz1293712 does not impact your Overcloud"
+      failed_when: bz1293712.rc == 0
