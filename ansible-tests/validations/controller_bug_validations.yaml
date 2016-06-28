@@ -15,20 +15,12 @@
     netdev_max_backlog: 100000
   tasks:
     - name : Get rabbitmq status
-<<<<<<< HEAD
       shell: rabbitmqctl cluster_status | grep -q "{partitions,\[\]},"
-=======
-      shell: rabbitmqctl cluster_status | grep partitions -A 1 | grep -V alarm | grep -q controller
->>>>>>> 34afbc9749cc028a81e1900bfc157ea915fdf527
       register: rabbit_partitioned
       become: true
     - name : Check rabbitmq for partitions
       fail: msg="RabbitMQ is partitioned, please fix this before doing anything with the Cloud"
-<<<<<<< HEAD
       failed_when: rabbit_partitioned.rc == 1
-=======
-      failed_when: rabbit_partitioned.rc == 0
->>>>>>> 34afbc9749cc028a81e1900bfc157ea915fdf527
     - name: Get max_connections on the database
       shell: mysql -e "show variables like 'max_connections';" | grep max_connections | awk '{print $2}'
       register: bz1266253
